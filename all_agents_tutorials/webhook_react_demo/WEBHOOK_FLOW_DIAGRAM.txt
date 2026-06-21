@@ -1,0 +1,117 @@
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │                    WEBHOOK FLOW — PIZZA ANALOGY                        │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+#
+#   PHASE 1: SUBSCRIBE (Give your phone number to the pizza shop)
+#   ══════════════════════════════════════════════════════════════
+#
+#   ┌──────────────────┐                    ┌──────────────────┐
+#   │  RECEIVER (You)  │   "Call me when    │  SENDER (Pizza   │
+#   │                  │───order is ready"──▶│     Shop)        │
+#   │  URL: /webhook   │                    │                  │
+#   │  Events:         │   POST /subscribe  │  Saves your URL  │
+#   │   order.created  │   {                │  in a list:      │
+#   │   payment.done   │     url: ...,      │  ┌────────────┐  │
+#   │                  │     events: [...]  │  │ Subscribers │  │
+#   └──────────────────┘   }                │  │  • You      │  │
+#                                           │  │  • Others   │  │
+#                                           │  └────────────┘  │
+#                                           └──────────────────┘
+#
+#
+#   PHASE 2: EVENT OCCURS (Pizza is ready!)
+#   ═══════════════════════════════════════
+#
+#   ┌──────────────────┐                    ┌──────────────────┐
+#   │  SENDER          │                    │                  │
+#   │  (Pizza Shop)    │                    │  Business Logic  │
+#   │                  │                    │                  │
+#   │  "A customer     │◀───────────────────│  create_order()  │
+#   │   placed an      │   event triggered  │  process_pay()   │
+#   │   order!"        │                    │  update_status() │
+#   └────────┬─────────┘                    └──────────────────┘
+#            │
+#            │  Checks: "Who subscribed to order.created?"
+#            │  Found: YOUR URL
+#            │
+#            ▼
+#
+#
+#   PHASE 3: SIGN & DELIVER (Call you with proof it's really us)
+#   ════════════════════════════════════════════════════════════
+#
+#   ┌──────────────────┐                    ┌──────────────────┐
+#   │  SENDER          │                    │  RECEIVER (You)  │
+#   │                  │                    │                  │
+#   │  1. Build payload│                    │                  │
+#   │  {               │                    │                  │
+#   │    event: "order │                    │                  │
+#   │      .created",  │                    │                  │
+#   │    data: {...},  │   HTTP POST        │                  │
+#   │    timestamp     │──────────────────▶ │  /webhook/receive│
+#   │  }               │                    │                  │
+#   │                  │   Headers:         │                  │
+#   │  2. Sign payload │   X-Webhook-       │                  │
+#   │  HMAC-SHA256     │    Signature:      │                  │
+#   │  (secret + data) │    "a3f8c2..."     │                  │
+#   │   = signature    │   X-Webhook-       │                  │
+#   │                  │    Event:          │                  │
+#   │                  │    "order.created" │                  │
+#   └──────────────────┘                    └────────┬─────────┘
+#                                                    │
+#                                                    ▼
+#
+#
+#   PHASE 4: VERIFY & ACT (You check caller ID before trusting)
+#   ════════════════════════════════════════════════════════════
+#
+#   ┌──────────────────────────────────────────────────────────┐
+#   │  RECEIVER                                                │
+#   │                                                          │
+#   │  1. Extract signature from header     "a3f8c2..."        │
+#   │                                                          │
+#   │  2. Recompute: HMAC-SHA256(           "a3f8c2..."        │
+#   │       my_secret_key, payload)                            │
+#   │                                                          │
+#   │  3. Compare:  "a3f8c2..." == "a3f8c2..."  ✅ MATCH!     │
+#   │               (timing-safe comparison)                   │
+#   │                                                          │
+#   │  4. Trust the payload → Process it!                      │
+#   │     • Update database                                    │
+#   │     • Send notification                                  │
+#   │     • Update UI via WebSocket                            │
+#   │                                                          │
+#   │  5. Return 200 OK                                        │
+#   └──────────────────────────────────────────────────────────┘
+#
+#
+#   PHASE 5: REAL-TIME UI (React dashboard sees everything)
+#   ═══════════════════════════════════════════════════════
+#
+#   ┌──────────────┐   Socket.IO    ┌─────────────────────────┐
+#   │  RECEIVER    │───(WebSocket)──▶│  REACT UI (Browser)     │
+#   │  server.py   │                │                         │
+#   │              │  pushes event  │  ┌───────────────────┐  │
+#   │              │  instantly     │  │ order.created      │  │
+#   │              │                │  │ ✅ Signature Valid │  │
+#   │              │                │  │ {customer: "Alice"}│  │
+#   │              │                │  └───────────────────┘  │
+#   └──────────────┘                └─────────────────────────┘
+#
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  REAL-WORLD HOSTING SUMMARY                                           │
+# │                                                                        │
+# │  Stripe/GitHub/Shopify (SENDER)     Your Server (RECEIVER)             │
+# │  ┌─────────────────────────┐        ┌─────────────────────────┐       │
+# │  │ They host this.         │        │ YOU host this.           │       │
+# │  │ You don't worry about   │──POST─▶│ Must be publicly         │       │
+# │  │ their infrastructure.   │        │ reachable (not localhost │       │
+# │  │                         │        │ in production).          │       │
+# │  └─────────────────────────┘        └─────────────────────────┘       │
+# │                                                                        │
+# │  In this demo: BOTH run in the same FastAPI server (localhost:4000)    │
+# │  for simplicity. In production, they'd be separate servers.           │
+# └─────────────────────────────────────────────────────────────────────────┘
