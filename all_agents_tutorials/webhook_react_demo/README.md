@@ -22,7 +22,7 @@ Server → Client: "Yes! Here it is"
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Express Server (:4000)                   │
+│                    FastAPI + Uvicorn (:4000)                     │
 │                                                                 │
 │  ┌──────────────────┐    ┌───────────────────────────────────┐  │
 │  │  Business Logic   │    │       Webhook Infrastructure      │  │
@@ -57,15 +57,56 @@ Server → Client: "Yes! Here it is"
                     └──────────────────────┘
 ```
 
+## Step-by-Step: How This Demo Works
+
+### Step 1 — App Setup (`server.py` top)
+FastAPI handles HTTP routes.  `python-socketio` adds WebSocket support so we can push webhook events to the React UI in real-time.  Both are combined into a single ASGI app using `socketio.ASGIApp`.
+
+### Step 2 — Shared Secret & Storage
+A shared HMAC secret (`WEBHOOK_SECRET`) is used to sign and verify payloads.  In production this would be per-subscriber and stored in a database.  Three in-memory lists act as our database: `subscriptions`, `delivery_log`, `orders`.
+
+### Step 3 — Signing & Verification
+- **`sign_payload()`** — serializes the payload to JSON, then computes `HMAC-SHA256(secret, json_bytes)` and returns the hex digest.
+- **`verify_signature()`** — recomputes the HMAC and compares using `hmac.compare_digest()` (timing-safe to prevent side-channel attacks).
+
+### Step 4 — Webhook Delivery (Sender)
+When a business event occurs:
+1. Build a payload: `{ id, event, timestamp, data }`
+2. Sign it → attach signature in `X-Webhook-Signature` header
+3. HTTP POST to the subscriber's URL using `httpx` (async)
+4. Log the result (success/failure) and push to the UI via Socket.IO
+
+### Step 5 — Webhook Receiver
+The `/webhook/receive` endpoint simulates a separate service:
+1. Extract `X-Webhook-Signature` header
+2. Recompute HMAC of the received payload
+3. Compare → if valid, return 200; if not, return 401
+4. Push the event to the React dashboard via Socket.IO
+
+### Step 6 — Subscription Management
+Receivers register by POSTing their URL + desired events to `/api/subscriptions`.  This is how services like Stripe let you configure webhook endpoints in their dashboard.
+
+### Step 7 — Business Logic (Triggers)
+The order/payment system is the "application."  Each action checks a condition:
+- Order created → fire `order.created` webhook
+- Order status changed → fire `order.updated` or `order.completed`
+- Payment processed → fire `payment.received`
+
+### Step 8 — Real-time UI via Socket.IO
+When the React frontend connects, the server sends current state (`init` event).  As webhooks fire, each event is pushed instantly to the browser.
+
+### Step 9 — Startup
+On launch, a default subscription is auto-registered pointing at our own `/webhook/receive` endpoint, so the demo works out of the box.
+
 ## Key Concepts Demonstrated
 
 | Concept | Where in Code |
 |---------|--------------|
 | **Webhook Registration** | `POST /api/subscriptions` — subscriber provides a URL and events |
-| **Event Dispatching** | `dispatchWebhook()` — finds matching subscriptions and delivers |
-| **Payload Signing** | `signPayload()` — HMAC-SHA256 signature in `X-Webhook-Signature` header |
-| **Signature Verification** | `verifySignature()` — receiver recomputes and compares (timing-safe) |
-| **Delivery Tracking** | `deliveryLog[]` — records status of each delivery attempt |
+| **Event Dispatching** | `dispatch_webhook()` — finds matching subscriptions and delivers |
+| **Payload Signing** | `sign_payload()` — HMAC-SHA256 signature in `X-Webhook-Signature` header |
+| **Signature Verification** | `verify_signature()` — receiver recomputes and compares (timing-safe) |
+| **Delivery Tracking** | `delivery_log[]` — records status of each delivery attempt |
 | **Real-time UI Updates** | Socket.IO pushes events to the React frontend instantly |
 
 ## Webhook Events
@@ -80,14 +121,14 @@ Server → Client: "Yes! Here it is"
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
-- npm
+- Python 3.10+
+- Node.js 18+ (for the React frontend)
 
 ### Run the server (Terminal 1)
 ```bash
 cd server
-npm install
-npm start
+pip install -r requirements.txt
+python server.py
 ```
 
 ### Run the React UI (Terminal 2)
@@ -114,7 +155,7 @@ Without signatures, anyone could POST fake events to your webhook URL. The flow:
 1. **Sender** computes `HMAC-SHA256(secret_key, payload)` and includes it as a header
 2. **Receiver** has the same secret key, recomputes the HMAC, and compares
 3. If they match → the payload is authentic and unmodified
-4. `crypto.timingSafeEqual()` prevents timing attacks during comparison
+4. `hmac.compare_digest()` prevents timing attacks during comparison
 
 ## Real-World Webhook Examples
 
